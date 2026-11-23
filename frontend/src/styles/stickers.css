@@ -1,0 +1,35 @@
+/* Sticker album. Rarity is shown by the frame: common pastel → uncommon colourful → rare silver → epic glow → legendary gold. */
+.stk-frame { position: relative; border-radius: 22px; padding: 3px; background: var(--stk-frame, #f9a8d4); }
+.stk-frame > .stk-inner { border-radius: 19px; background: #fff; height: 100%; padding: 12px 10px 12px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; }
+.stk-common   { --stk-frame: linear-gradient(135deg, #fbcfe8, #bae6fd); }
+.stk-uncommon { --stk-frame: linear-gradient(135deg, #34d399, #fbbf24, #60a5fa, #f472b6); }
+.stk-rare     { --stk-frame: linear-gradient(135deg, #f1f5f9, #94a3b8 45%, #e2e8f0 60%, #94a3b8); }
+.stk-epic     { --stk-frame: linear-gradient(135deg, #c084fc, #7c3aed); box-shadow: 0 0 0 2px rgba(168, 85, 247, .18), 0 0 18px rgba(168, 85, 247, .55); }
+.stk-legendary { --stk-frame: linear-gradient(120deg, #f59e0b, #fde68a, #f59e0b, #fff2b8, #f59e0b); background-size: 300% 300%; animation: stk-gold 3.2s linear infinite; box-shadow: 0 0 20px rgba(245, 158, 11, .5); }
+@keyframes stk-gold { 0% { background-position: 0% 50%; } 100% { background-position: 300% 50%; } }
+.stk-locked { opacity: .96; }
+.stk-locked .stk-inner { background: #f5f7fa; }
+.stk-frame.stk-locked { --stk-frame: linear-gradient(135deg, #e2e8f0, #cbd5e1); box-shadow: none; animation: none; }
+.stk-name { font-weight: 900; font-size: 14px; color: #153e67; line-height: 1.2; }
+.stk-rarity { font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; }
+.stk-rarity.common { background: #fce7f3; color: #9d174d; } .stk-rarity.uncommon { background: #dcfce7; color: #166534; }
+.stk-rarity.rare { background: #e2e8f0; color: #334155; } .stk-rarity.epic { background: #ede9fe; color: #5b21b6; } .stk-rarity.legendary { background: #fef3c7; color: #92400e; }
+.stk-desc { font-size: 12px; color: #688097; line-height: 1.4; }
+.stk-bar { width: 100%; height: 8px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
+.stk-bar > span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #19b7a7, #36a9db); transition: width .5s ease; }
+.stk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 150px), 1fr)); gap: 14px; }
+.stk-collections { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr)); gap: 14px; }
+.stk-collection { text-align: left; width: 100%; background: #fff; border: 2px solid #e0eaed; border-radius: 20px; padding: 14px; cursor: pointer; display: flex; flex-direction: column; gap: 8px; font-family: inherit; transition: transform .15s, border-color .15s, box-shadow .15s; }
+.stk-collection:hover { transform: translateY(-2px); border-color: #19b7a7; box-shadow: 0 6px 18px rgba(24, 63, 93, .09); }
+.stk-collection:focus-visible, .stk-frame button:focus-visible { outline: 3px solid #66c7d2; outline-offset: 3px; }
+.stk-cover { height: 96px; border-radius: 14px; display: grid; place-items: center; background: linear-gradient(135deg, #fdf2f8, #eff6ff); }
+.stk-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 12px 0 18px; }
+.stk-summary > div { background: #fff; border: 1px solid #e0eaed; border-radius: 16px; padding: 12px; text-align: center; }
+.stk-summary strong { display: block; font-size: 24px; color: #153e67; line-height: 1.1; }
+.stk-summary small { font-size: 11px; font-weight: 800; color: #688097; }
+.stk-evo { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: #fff; border: 1px dashed #c4b5fd; border-radius: 18px; padding: 12px; }
+.stk-evo-step { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 11px; font-weight: 800; color: #688097; min-width: 74px; }
+.stk-evo-arrow { color: #a78bfa; font-weight: 900; font-size: 18px; }
+.stk-scrim { position: fixed; inset: 0; z-index: 9500; background: rgba(21, 40, 70, .6); display: grid; place-items: center; padding: 16px; }
+.stk-modal { width: min(100%, 380px); background: linear-gradient(160deg, #fff, #fdf2f8 60%, #eff6ff); border-radius: 28px; padding: 24px 20px; text-align: center; box-shadow: 0 24px 60px rgba(0, 0, 0, .3); }
+@media (prefers-reduced-motion: reduce) { .stk-legendary { animation: none; } .stk-bar > span { transition: none; } }

@@ -1,0 +1,189 @@
+/* Teacher Dashboard Specific Styles */
+
+.teacher-badge {
+  background: linear-gradient(100deg, #ff9a56, #ffb366);
+  color: white;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-weight: 900;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.teacher-hero {
+  background: linear-gradient(110deg, #e6f5ff 0%, #e8f9f5 58%, #e0f8f3 100%) !important;
+}
+
+.stat-card {
+  text-align: center;
+  padding: 28px 20px;
+  background: linear-gradient(135deg, rgba(18, 169, 159, 0.05), rgba(54, 169, 219, 0.05));
+}
+
+.stat-number {
+  font-size: 42px;
+  font-weight: 900;
+  color: var(--navy);
+  line-height: 1;
+}
+
+.stat-label {
+  font-size: 13px;
+  font-weight: 900;
+  color: var(--navy);
+  margin-top: 6px;
+}
+
+.stat-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.topic-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.topic-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  margin-bottom: 12px;
+  gap: 12px;
+}
+
+.topic-header h3 {
+  margin: 0;
+  color: var(--navy);
+  font-size: 18px;
+}
+
+.grade-badge {
+  background: #ddf5eb;
+  color: #148a77;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.topic-subject {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 16px 0;
+}
+
+.topic-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  padding: 12px;
+  background: #f8fafb;
+  border-radius: 12px;
+}
+
+.topic-stats .stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+}
+
+.topic-stats .stat-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.topic-stats .stat-value {
+  font-size: 16px;
+  font-weight: 900;
+  color: var(--navy);
+}
+
+.topic-stats .stat-label {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0;
+  margin-top: 2px;
+}
+
+.topic-section {
+  border: 1px solid #e0e8e9;
+  padding: 0;
+}
+
+.topic-title-bar {
+  background: linear-gradient(90deg, #f5fafc 0%, #fafbfc 100%);
+  border-bottom: 1px solid #e0e8e9;
+}
+
+.topic-title-bar:hover {
+  background: linear-gradient(90deg, #f1f8fb 0%, #f7fafb 100%);
+}
+
+.insight-card {
+  background: linear-gradient(135deg, rgba(18, 169, 159, 0.03), rgba(54, 169, 219, 0.03));
+  border: 1px solid rgba(18, 169, 159, 0.1);
+}
+
+/* Responsive */
+@media (max-width: 800px) {
+  .grid.three {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .topic-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .topic-stats .stat {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 520px) {
+  .grid.three,
+  .grid.two {
+    grid-template-columns: 1fr;
+  }
+
+  .stat-number {
+    font-size: 32px;
+  }
+
+  .stat-label {
+    font-size: 12px;
+  }
+
+  .topic-header {
+    flex-direction: column;
+  }
+
+  .topic-header h3 {
+    font-size: 16px;
+  }
+}
+
+/* Navigation styles for teacher */
+.nav-btn {
+  background: none;
+  color: #506b80;
+  font-weight: 800;
+  font-size: 12px;
+  padding: 24px 0 20px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  cursor: pointer;
+}
+
+.nav-btn:hover {
+  color: var(--navy);
+}
+
+.nav-btn.active {
+  color: var(--navy);
+  border-bottom-color: var(--teal);
+}

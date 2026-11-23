@@ -1,0 +1,17 @@
+export { default as SuperAdminDashboard } from './SuperAdminDashboard';
+export { default as SuperAdminSetup } from './SuperAdminSetup';
+export { default as SuperAdminTeachers } from './SuperAdminTeachers';
+export { default as SuperAdminTeacherDetail } from './SuperAdminTeacherDetail';
+export { default as SuperAdminInvitations } from './SuperAdminInvitations';
+export { default as SuperAdminAuditLogs } from './SuperAdminAuditLogs';
+export { default as SuperAdminStudents } from './SuperAdminStudents';
+export { default as SuperAdminStudentDetail } from './SuperAdminStudentDetail';
+export { default as SuperAdminEnrollment } from './SuperAdminEnrollment';
+export { default as SuperAdminClassrooms } from './SuperAdminClassrooms';
+export { default as SuperAdminClassroomDetail } from './SuperAdminClassroomDetail';
+export { default as SuperAdminComparison } from './SuperAdminComparison';
+export { default as SuperAdminAnalytics } from './SuperAdminAnalytics';
+export { SuperAdminActivities, SuperAdminGames } from './SuperAdminActivities';
+export { default as SuperAdminReports } from './SuperAdminReports';
+export { default as SuperAdminSettings } from './SuperAdminSettings';
+export { default as SuperAdminWhatsApp } from './SuperAdminWhatsApp';

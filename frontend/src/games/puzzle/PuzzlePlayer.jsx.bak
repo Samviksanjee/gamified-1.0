@@ -1,0 +1,821 @@
+/**
+ * PuzzlePlayer — Phase 5
+ *
+ * Full student-facing jigsaw puzzle game.
+ *
+ * Features:
+ *  • Drag-and-drop board (dnd-kit) — touch and mouse
+ *  • Number-based ordering mode — click to assign slot position
+ *  • Mode switcher (both modes without losing current arrangement)
+ *  • Timer countdown with squirrel reminder (reuses TimerReminder)
+ *  • Move counter
+ *  • Preview button (shows full image for 3 s, 3 uses max)
+ *  • Shuffle / Reset
+ *  • Backend-verified completion, confetti animation
+ *
+ * SECURITY: This component never calculates or stores correct positions.
+ * Pieces are identified by opaque display_id (UUID) only.
+ * Correctness is determined entirely by the backend /verify endpoint.
+ */
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import {
+  DndContext,
+  DragOverlay,
+  MouseSensor,
+  TouchSensor,
+  useDroppable,
+  useDraggable,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import { CSS } from '@dnd-kit/utilities';
+import TimerReminder from '../../components/TimerReminder.jsx';
+import { api } from '../../api.js';
+
+/* ─── constants ─────────────────────────────────────────────────────────── */
+const MAX_PREVIEWS = 3;
+const PREVIEW_DURATION_MS = 3000;
+
+/* ─── colours ──────────────────────────────────────────────────────────── */
+const TEAL       = '#12a99f';
+const TEAL_DARK  = '#0d857c';
+const BORDER     = '#e0eaed';
+const TEXT       = '#153e67';
+const MUTED      = '#688097';
+
+/* ══════════════════════════════════════════════════════════════════════════
+   DnD sub-components
+   ══════════════════════════════════════════════════════════════════════════ */
+
+function DraggablePiece({ displayId, pieceUrl, size }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: displayId,
+    data: { displayId, pieceUrl },
+  });
+
+  const style = {
+    width: size, height: size,
+    backgroundImage: `url(${pieceUrl})`,
+    backgroundSize: 'cover', backgroundPosition: 'center',
+    borderRadius: 6, border: `2px solid ${isDragging ? TEAL : BORDER}`,
+    cursor: 'grab', boxSizing: 'border-box',
+    opacity: isDragging ? 0.35 : 1,
+    transform: CSS.Translate.toString(transform),
+    touchAction: 'none',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+    transition: isDragging ? undefined : 'opacity .15s',
+    boxShadow: isDragging ? 'none' : '0 2px 6px rgba(20,169,159,.1)',
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...listeners} {...attributes}
+      aria-label={`Puzzle piece`} role="button" tabIndex={0}
+    />
+  );
+}
+
+function DroppableSlot({ slotIndex, displayId, pieceUrl, size, tileSize }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `slot-${slotIndex}` });
+
+  const style = {
+    width: size, height: size, boxSizing: 'border-box',
+    border: `2px dashed ${isOver ? TEAL : '#c5d5da'}`,
+    borderRadius: 6, background: isOver ? '#e8faf8' : '#f4f8f9',
+    position: 'relative', overflow: 'hidden',
+    transition: 'border-color .15s, background .15s',
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} aria-label={`Slot ${slotIndex + 1}`}>
+      {displayId && pieceUrl ? (
+        <DraggablePiece displayId={displayId} pieceUrl={pieceUrl} size={tileSize} />
+      ) : (
+        <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
+          fontSize: 12, color: '#c5d5da', fontWeight: 700 }}>
+          {slotIndex + 1}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Board implementations
+   ══════════════════════════════════════════════════════════════════════════ */
+
+function DragDropBoard({
+  gridSize, slotBoard, tray, pieceMap,
+  tileSize, onBoardChange,
+}) {
+  const [activePiece, setActivePiece] = useState(null);
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 80, tolerance: 5 } }),
+  );
+
+  const handleDragStart = ({ active }) => {
+    setActivePiece({ displayId: active.id, pieceUrl: active.data.current.pieceUrl });
+  };
+
+  const handleDragEnd = ({ active, over }) => {
+    setActivePiece(null);
+    if (!over) return;
+    const draggedId = active.id;
+    const overId    = over.id; // 'slot-{n}' or 'tray'
+
+    const newBoard = { ...slotBoard };
+    const newTray  = [...tray];
+
+    // Find where the dragged piece currently lives
+    const fromSlot = Object.entries(newBoard).find(([, v]) => v === draggedId)?.[0];
+    const fromTray = newTray.includes(draggedId);
+
+    if (overId === 'tray') {
+      // Drop back to tray
+      if (fromSlot !== undefined) {
+        newBoard[fromSlot] = null;
+        if (!newTray.includes(draggedId)) newTray.push(draggedId);
+      }
+    } else if (overId.startsWith('slot-')) {
+      const targetSlot = overId.replace('slot-', '');
+      const occupant = newBoard[targetSlot];
+
+      // If target slot already has a piece, swap
+      if (occupant && occupant !== draggedId) {
+        newBoard[targetSlot] = draggedId;
+        if (fromSlot !== undefined) {
+          newBoard[fromSlot] = occupant;
+        } else {
+          // Came from tray — put occupant back in tray
+          const trayIdx = newTray.indexOf(draggedId);
+          if (trayIdx !== -1) newTray.splice(trayIdx, 1);
+          if (!newTray.includes(occupant)) newTray.push(occupant);
+        }
+      } else {
+        // Empty slot — place piece
+        newBoard[targetSlot] = draggedId;
+        if (fromSlot !== undefined) newBoard[fromSlot] = null;
+        if (fromTray) {
+          const trayIdx = newTray.indexOf(draggedId);
+          if (trayIdx !== -1) newTray.splice(trayIdx, 1);
+        }
+      }
+    }
+
+    onBoardChange({ board: newBoard, tray: newTray });
+  };
+
+  const tileSlot = Math.max(tileSize - 4, 40);
+
+  return (
+    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      {/* Drop-board grid */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: `repeat(${gridSize}, ${tileSize}px)`,
+        gap: 3,
+        background: '#ecf3f5',
+        borderRadius: 10,
+        padding: 6,
+        width: 'fit-content',
+      }} aria-label="Puzzle board">
+        {Array.from({ length: gridSize * gridSize }, (_, i) => (
+          <DroppableSlot
+            key={i}
+            slotIndex={i}
+            displayId={slotBoard[String(i)]}
+            pieceUrl={slotBoard[String(i)] ? pieceMap[slotBoard[String(i)]] : null}
+            size={tileSize}
+            tileSize={tileSlot}
+          />
+        ))}
+      </div>
+
+      {/* Tray */}
+      <TrayDroppable tray={tray} pieceMap={pieceMap} tileSize={tileSize} gridSize={gridSize} />
+
+      {/* Drag overlay */}
+      <DragOverlay>
+        {activePiece && (
+          <div style={{
+            width: tileSize, height: tileSize,
+            backgroundImage: `url(${activePiece.pieceUrl})`,
+            backgroundSize: 'cover',
+            borderRadius: 6,
+            border: `2.5px solid ${TEAL}`,
+            opacity: 0.9,
+            boxShadow: '0 8px 24px rgba(0,0,0,.2)',
+          }} />
+        )}
+      </DragOverlay>
+    </DndContext>
+  );
+}
+
+function TrayDroppable({ tray, pieceMap, tileSize, gridSize }) {
+  const { setNodeRef, isOver } = useDroppable({ id: 'tray' });
+  const cols = Math.min(tray.length, gridSize);
+  return (
+    <div
+      ref={setNodeRef}
+      aria-label="Piece tray"
+      style={{
+        marginTop: 14,
+        display: 'grid',
+        gridTemplateColumns: `repeat(${cols || 1}, ${tileSize}px)`,
+        gap: 4,
+        padding: 8,
+        borderRadius: 10,
+        border: `2px dashed ${isOver ? TEAL : BORDER}`,
+        background: isOver ? '#e8faf8' : '#f8fdfd',
+        minHeight: tileSize + 16,
+        maxWidth: Math.min(tray.length, gridSize) * (tileSize + 4) + 16,
+        overflowX: 'auto',
+      }}
+    >
+      {tray.length === 0 && (
+        <div style={{ color: MUTED, fontSize: 12, padding: '10px 16px' }}>
+          All pieces placed! ✓
+        </div>
+      )}
+      {tray.map((displayId) => (
+        <DraggablePiece
+          key={displayId}
+          displayId={displayId}
+          pieceUrl={pieceMap[displayId]}
+          size={tileSize}
+        />
+      ))}
+    </div>
+  );
+}
+
+/* ── Number-based board ─────────────────────────────────────────────────── */
+function NumberBoard({ gridSize, slotBoard, tray, pieceMap, onBoardChange }) {
+  const [selectedPiece, setSelectedPiece] = useState(null);
+  const total = gridSize * gridSize;
+  const tileSize = Math.min(100, Math.floor(Math.min(340, window.innerWidth - 32) / gridSize) - 4);
+
+  const allPieces = [
+    ...Object.entries(slotBoard).filter(([, v]) => v).map(([slot, id]) => ({ id, slot: Number(slot) })),
+    ...tray.map((id) => ({ id, slot: null })),
+  ];
+
+  const handlePieceClick = (displayId) => {
+    if (selectedPiece === displayId) { setSelectedPiece(null); return; }
+    setSelectedPiece(displayId);
+  };
+
+  const handleSlotClick = (slotIndex) => {
+    if (!selectedPiece) return;
+    const newBoard = { ...slotBoard };
+    const newTray  = [...tray];
+    const occupant = newBoard[String(slotIndex)];
+    const prevSlot = Object.entries(newBoard).find(([, v]) => v === selectedPiece)?.[0];
+    const fromTray = newTray.includes(selectedPiece);
+
+    if (occupant === selectedPiece) { setSelectedPiece(null); return; }
+
+    // Place piece in slot, swap or tray the occupant
+    newBoard[String(slotIndex)] = selectedPiece;
+    if (occupant) {
+      if (prevSlot !== undefined) newBoard[prevSlot] = occupant;
+      else if (!newTray.includes(occupant)) newTray.push(occupant);
+    } else if (prevSlot !== undefined) {
+      newBoard[prevSlot] = null;
+    }
+    if (fromTray) {
+      const idx = newTray.indexOf(selectedPiece);
+      if (idx !== -1) newTray.splice(idx, 1);
+    }
+    setSelectedPiece(null);
+    onBoardChange({ board: newBoard, tray: newTray });
+  };
+
+  return (
+    <div>
+      {/* Board grid */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: `repeat(${gridSize}, ${tileSize}px)`,
+        gap: 3,
+        background: '#ecf3f5',
+        borderRadius: 10,
+        padding: 6,
+        width: 'fit-content',
+      }} aria-label="Puzzle board (number mode)">
+        {Array.from({ length: total }, (_, i) => {
+          const occupied = slotBoard[String(i)];
+          const isTarget = selectedPiece && !occupied;
+          return (
+            <div key={i}
+              onClick={() => handleSlotClick(i)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => e.key === 'Enter' && handleSlotClick(i)}
+              aria-label={`Slot ${i + 1}${occupied ? ' (occupied)' : ' (empty)'}`}
+              style={{
+                width: tileSize, height: tileSize, boxSizing: 'border-box',
+                border: `2px solid ${occupied ? BORDER : isTarget ? TEAL : '#c5d5da'}`,
+                borderRadius: 6, overflow: 'hidden', cursor: selectedPiece && !occupied ? 'pointer' : 'default',
+                background: isTarget ? '#e8faf8' : '#f4f8f9', position: 'relative',
+                transition: 'border-color .15s',
+              }}
+            >
+              {occupied ? (
+                <div
+                  onClick={(e) => { e.stopPropagation(); handlePieceClick(occupied); }}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') handlePieceClick(occupied); }}
+                  style={{
+                    width: '100%', height: '100%',
+                    backgroundImage: `url(${pieceMap[occupied]})`,
+                    backgroundSize: 'cover',
+                    outline: selectedPiece === occupied ? `3px solid ${TEAL}` : 'none',
+                    cursor: 'pointer',
+                  }}
+                />
+              ) : (
+                <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
+                  fontSize: 12, color: '#c5d5da', fontWeight: 700 }}>{i + 1}</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Tray */}
+      <div style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 4,
+        padding: 8, borderRadius: 10, border: `2px dashed ${BORDER}`,
+        background: '#f8fdfd', minHeight: tileSize + 16 }}
+        aria-label="Piece tray"
+      >
+        {tray.length === 0 && <div style={{ color: MUTED, fontSize: 12, padding: '10px 16px' }}>All pieces placed! ✓</div>}
+        {tray.map((displayId) => (
+          <div key={displayId}
+            onClick={() => handlePieceClick(displayId)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => e.key === 'Enter' && handlePieceClick(displayId)}
+            aria-label="Puzzle piece"
+            style={{
+              width: tileSize, height: tileSize,
+              backgroundImage: `url(${pieceMap[displayId]})`,
+              backgroundSize: 'cover',
+              borderRadius: 6, cursor: 'pointer',
+              border: `3px solid ${selectedPiece === displayId ? TEAL : BORDER}`,
+              boxSizing: 'border-box',
+              outline: selectedPiece === displayId ? `2px solid ${TEAL}55` : 'none',
+              transition: 'border-color .15s',
+            }}
+          />
+        ))}
+      </div>
+      {selectedPiece && (
+        <p style={{ fontSize: 12, color: TEAL, marginTop: 6 }}>
+          ← Click an empty slot on the board to place this piece
+        </p>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Completion screen
+   ══════════════════════════════════════════════════════════════════════════ */
+
+function CompletionScreen({ title, fullImageUrl, moves, elapsedSeconds, onPlayAgain }) {
+  const mins = Math.floor(elapsedSeconds / 60);
+  const secs = Math.floor(elapsedSeconds % 60);
+
+  return (
+    <div style={{ textAlign: 'center', padding: '32px 20px' }}>
+      {/* Confetti emoji burst */}
+      <div style={{ fontSize: 56, marginBottom: 12, animation: 'popIn .5s ease-out both' }}>🎉</div>
+      <h2 style={{ color: TEXT, margin: '0 0 6px' }}>Puzzle Complete!</h2>
+      <p style={{ color: MUTED, marginBottom: 20 }}>You solved the {title} puzzle!</p>
+
+      {fullImageUrl && (
+        <img src={fullImageUrl} alt={title}
+          style={{ maxWidth: 280, borderRadius: 14, border: `2px solid ${BORDER}`, marginBottom: 20, display: 'block', margin: '0 auto 20px' }}
+        />
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 20, marginBottom: 28 }}>
+        <div style={{ background: '#e8faf8', borderRadius: 12, padding: '12px 20px' }}>
+          <div style={{ fontWeight: 900, fontSize: 22, color: TEAL }}>{moves}</div>
+          <div style={{ fontSize: 12, color: MUTED }}>moves</div>
+        </div>
+        <div style={{ background: '#e8faf8', borderRadius: 12, padding: '12px 20px' }}>
+          <div style={{ fontWeight: 900, fontSize: 22, color: TEAL }}>
+            {mins > 0 ? `${mins}m ${secs}s` : `${secs}s`}
+          </div>
+          <div style={{ fontSize: 12, color: MUTED }}>time</div>
+        </div>
+      </div>
+
+      <button
+        className="btn btn-primary"
+        onClick={onPlayAgain}
+        style={{ padding: '12px 28px', fontSize: 15, borderRadius: 12 }}
+      >
+        🔄 Play Again
+      </button>
+
+      <style>{`
+        @keyframes popIn{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}
+        @keyframes shake{0%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-5px)}80%{transform:translateX(5px)}100%{transform:translateX(0)}}
+        @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+      `}</style>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Main PuzzlePlayer
+   ══════════════════════════════════════════════════════════════════════════ */
+
+export default function PuzzlePlayer() {
+  const { activityId } = useParams();
+  const navigate = useNavigate();
+
+  /* ── ALL state — must all be at the top before any effects or logic ─── */
+  const [loadError, setLoadError]   = useState('');
+  const [loading,   setLoading]     = useState(true);
+  const [gameData,  setGameData]    = useState(null);
+  const [pieceMap,  setPieceMap]    = useState({});
+  const [slotBoard,    setSlotBoard]    = useState({});
+  const [tray,         setTray]         = useState([]);
+  const [moves,        setMoves]        = useState(0);
+  const [elapsedSecs,  setElapsedSecs]  = useState(0);
+  const [previewUses,  setPreviewUses]  = useState(0);
+  const [showPreview,  setShowPreview]  = useState(false);
+  const [completed,    setCompleted]    = useState(false);
+  const [mode,         setMode]         = useState('drag');
+  const [verifyError,  setVerifyError]  = useState('');
+  const [verifying,    setVerifying]    = useState(false);
+  const [timerKey,     setTimerKey]     = useState(0);
+  const [shaking,      setShaking]      = useState(false);
+
+  /* ── refs ── */
+  const startedAt  = useRef(Date.now());
+  const timerTick  = useRef(null);
+  const wasLoaded  = useRef(false);
+
+  /* ── load / start attempt ──────────────────────────────────────────────── */
+  const startGame = useCallback(async () => {
+    setLoadError('');
+    setLoading(true);
+    setCompleted(false);
+    setVerifyError('');
+    try {
+      // 1. Fetch puzzle metadata (title, fullImageUrl, timerConfig)
+      const meta = await api.puzzle.get(activityId);
+      // 2. Start or resume attempt (shuffled pieces, board state)
+      const data = await api.puzzle.start(activityId);
+      const map = {};
+      data.pieces.forEach((p) => { map[p.display_id] = p.piece_url; });
+      setPieceMap(map);
+
+      // Restore or initialise board
+      if (data.resumed && data.board_state?.board) {
+        const b = {};
+        const t = [];
+        Object.entries(data.board_state.board).forEach(([slot, did]) => { b[slot] = did || null; });
+        data.pieces.forEach(({ display_id }) => {
+          const onBoard = Object.values(b).includes(display_id);
+          if (!onBoard) t.push(display_id);
+        });
+        setSlotBoard(b);
+        setTray(t);
+        setMoves(data.board_state.moves || 0);
+        setPreviewUses(data.board_state.preview_uses || 0);
+        setElapsedSecs(data.board_state.elapsed_seconds || 0);
+      } else {
+        const total = data.total_pieces;
+        const empty = {};
+        for (let i = 0; i < total; i++) empty[String(i)] = null;
+        setSlotBoard(empty);
+        setTray(data.pieces.map((p) => p.display_id));
+        setMoves(0);
+        setPreviewUses(0);
+        setElapsedSecs(0);
+      }
+
+      setGameData({
+        attemptId: data.attempt_id,
+        gridSize: data.grid_size,
+        totalPieces: data.total_pieces,
+        title: meta.title || data.title || 'Puzzle',
+        fullImageUrl: meta.thumbnail_url || null,
+        maxAttempts: meta.max_attempts,
+        instructions: meta.instructions,
+      });
+      setTimerKey((k) => k + 1);
+      startedAt.current = Date.now() - (data.board_state?.elapsed_seconds || 0) * 1000;
+      wasLoaded.current = true;
+    } catch (err) {
+      setLoadError(err.message || 'Could not load puzzle.');
+    } finally {
+      setLoading(false);
+    }
+  }, [activityId]);
+
+  useEffect(() => { startGame(); }, [startGame]);
+
+  /* ── elapsed-seconds tick ────────────────────────────────────────────── */
+  useEffect(() => {
+    if (!gameData || completed) return () => {};
+    timerTick.current = setInterval(() => {
+      setElapsedSecs(Math.floor((Date.now() - startedAt.current) / 1000));
+    }, 1000);
+    return () => clearInterval(timerTick.current);
+  }, [gameData, completed]);
+
+  /* ── save on unmount ─────────────────────────────────────────────────── */
+  useEffect(() => {
+    return () => {
+      if (!gameData || completed) return;
+      api.puzzle.saveProgress(gameData.attemptId, {
+        board: slotBoard,
+        tray,
+        moves,
+        elapsed_seconds: Math.floor((Date.now() - startedAt.current) / 1000),
+        preview_uses: previewUses,
+      }).catch(() => {});
+    };
+  }, [gameData, completed, slotBoard, tray, moves, previewUses]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── auto-save progress every 15 s ────────────────────────────────────── */
+  useEffect(() => {
+    if (!gameData || completed) return () => {};
+    const save = () => {
+      api.puzzle.saveProgress(gameData.attemptId, {
+        board: slotBoard,
+        tray,
+        moves,
+        elapsed_seconds: Math.floor((Date.now() - startedAt.current) / 1000),
+        preview_uses: previewUses,
+      }).catch(() => {});
+    };
+    const id = setInterval(save, 15_000);
+    return () => clearInterval(id);
+  }, [gameData, completed, slotBoard, tray, moves, previewUses]);
+
+  /* ── board change handler ─────────────────────────────────────────── */
+  const handleBoardChange = ({ board, tray: newTray }) => {
+    setSlotBoard(board);
+    setTray(newTray);
+    setMoves((m) => m + 1);
+    setVerifyError('');
+  };
+
+  /* ── verify ──────────────────────────────────────────────────────── */
+  const handleVerify = async () => {
+    // Validate all pieces placed
+    const emptySlots = Object.values(slotBoard).filter((v) => !v).length;
+    if (emptySlots > 0) {
+      setVerifyError(`Place all ${tray.length} remaining piece${tray.length !== 1 ? 's' : ''} before checking.`);
+      setShaking(true);
+      setTimeout(() => setShaking(false), 600);
+      return;
+    }
+    setVerifying(true);
+    setVerifyError('');
+    try {
+      const arrangement = {};
+      Object.entries(slotBoard).forEach(([slot, did]) => {
+        if (did) arrangement[did] = Number(slot);
+      });
+      const elapsed = Math.floor((Date.now() - startedAt.current) / 1000);
+      const result = await api.puzzle.verify(gameData.attemptId, { arrangement, elapsed_seconds: elapsed, moves });
+      if (result.is_correct) {
+        setCompleted(true);
+        setElapsedSecs(result.elapsed_seconds || elapsed);
+        clearInterval(timerTick.current);
+      } else {
+        setVerifyError(`Not quite! ${result.correct_pieces}/${result.total_pieces} pieces in the right position. Keep trying!`);
+        setShaking(true);
+        setTimeout(() => setShaking(false), 600);
+      }
+    } catch (err) {
+      setVerifyError(err.message || 'Could not verify. Try again.');
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  /* ── shuffle tray ──────────────────────────────────────────────────────── */
+  const handleShuffle = () => {
+    setTray((prev) => {
+      const arr = [...prev];
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    });
+  };
+
+  /* ── reset board ──────────────────────────────────────────────────────── */
+  const handleReset = () => {
+    if (!gameData) return;
+    const empty = {};
+    for (let i = 0; i < gameData.totalPieces; i++) empty[String(i)] = null;
+    setSlotBoard(empty);
+    setTray(Object.keys(pieceMap));
+    setMoves((m) => m + 1);
+    setVerifyError('');
+  };
+
+  /* ── preview (show full image for PREVIEW_DURATION_MS) ─────────────── */
+  const handlePreview = () => {
+    if (previewUses >= MAX_PREVIEWS) return;
+    setPreviewUses((u) => u + 1);
+    setShowPreview(true);
+    setTimeout(() => setShowPreview(false), PREVIEW_DURATION_MS);
+  };
+
+  /* ── tile size — responsive to viewport ────────────────────────────── */
+  const tileSize = gameData
+    ? (() => {
+        const vw = typeof window !== 'undefined' ? window.innerWidth : 768;
+        const available = Math.min(vw - 32, 580);
+        const raw = Math.floor(available / gameData.gridSize) - 4;
+        return Math.max(44, Math.min(100, raw));
+      })()
+    : 64;
+
+  /* ─────────────────────────────────────────────────────────────────────
+     RENDER
+     ───────────────────────────────────────────────────────────────────── */
+
+  if (loading) {
+    return (
+      <main style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: 16 }}>
+        <div style={{ fontSize: 48 }}>🧩</div>
+        <p style={{ color: '#688097', fontSize: 16, margin: 0 }}>Loading puzzle…</p>
+      </main>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <main style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: 16, padding: 24 }}>
+        <div style={{ fontSize: 48 }}>⚠️</div>
+        <h2 style={{ color: '#153e67', margin: 0 }}>Could not load puzzle</h2>
+        <p style={{ color: '#a63c3c', background: '#ffe9e7', padding: '12px 20px', borderRadius: 10, maxWidth: 420, textAlign: 'center', margin: 0 }}>
+          {loadError}
+        </p>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button className="btn btn-primary" onClick={startGame}>🔄 Retry</button>
+          <button className="btn btn-soft" onClick={() => navigate(-1)}>← Back</button>
+        </div>
+      </main>
+    );
+  }
+
+  if (!gameData) {
+    return (
+      <main style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
+        <div style={{ fontSize: 48 }}>🧩</div>
+        <p style={{ color: '#688097' }}>Preparing puzzle…</p>
+      </main>
+    );
+  }
+
+  if (completed) {
+    return (
+      <main style={{ maxWidth: 640, margin: '0 auto', padding: '24px 16px' }}>
+        <CompletionScreen
+          title={gameData.title}
+          fullImageUrl={gameData.fullImageUrl}
+          moves={moves}
+          elapsedSeconds={elapsedSecs}
+          onPlayAgain={() => { setCompleted(false); startGame(); }}
+        />
+      </main>
+    );
+  }
+
+  const allPlaced = tray.length === 0;
+
+  return (
+    <main style={{ maxWidth: 720, margin: '0 auto', padding: '16px' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+        <button onClick={() => navigate(-1)} className="btn btn-soft" style={{ padding: '6px 12px', fontSize: 13 }}>
+          ← Back
+        </button>
+        <h2 style={{ margin: 0, color: TEXT, flex: 1, fontSize: 'clamp(16px,4vw,22px)' }}>🧩 {gameData.title}</h2>
+        {/* Timer from existing TimerReminder component */}
+        <TimerReminder
+          config={{ enabled: true, duration_seconds: 120, reminder_at_seconds: 0 }}
+          gameType="puzzle"
+          active={!completed}
+          timerKey={timerKey}
+        />
+      </div>
+
+      {/* Instructions */}
+      {gameData.instructions && (
+        <p style={{ fontSize: 13, color: '#688097', margin: '0 0 10px',
+          background: '#f4f8f9', borderRadius: 8, padding: '8px 12px' }}>
+          {gameData.instructions}
+        </p>
+      )}
+
+      {/* Stats bar */}
+      <div style={{ display: 'flex', gap: 16, fontSize: 13, color: MUTED, marginBottom: 12, flexWrap: 'wrap' }}>
+        <span>🕒 {Math.floor(elapsedSecs / 60)}:{String(Math.floor(elapsedSecs % 60)).padStart(2, '0')}</span>
+        <span>🔢 Moves: {moves}</span>
+        <span>📦 In tray: {tray.length}</span>
+      </div>
+
+      {/* Mode switcher */}
+      <div role="group" aria-label="Interaction mode" style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        {[['drag', '↕ Drag & Drop'], ['number', '🔢 Number Mode']].map(([m, label]) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => setMode(m)}
+            aria-pressed={mode === m}
+            style={{
+              padding: '7px 14px', borderRadius: 20, fontSize: 12, fontWeight: 700,
+              border: `2px solid ${mode === m ? TEAL : BORDER}`,
+              background: mode === m ? TEAL_LIGHT : '#fff',
+              color: mode === m ? TEAL_DARK : MUTED,
+              cursor: 'pointer',
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Preview overlay */}
+      {showPreview && gameData.fullImageUrl && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(10,30,50,.7)',
+          display: 'grid', placeItems: 'center' }} onClick={() => setShowPreview(false)}>
+          <img src={gameData.fullImageUrl} alt="Preview" style={{ maxWidth: '80vw', maxHeight: '80vh', borderRadius: 12 }} />
+          <p style={{ color: 'white', fontSize: 13, marginTop: 12 }}>Tap anywhere to close</p>
+        </div>
+      )}
+
+      {/* Board */}
+      <div style={{ overflowX: 'auto', paddingBottom: 8 }}>
+        {mode === 'drag' ? (
+          <DragDropBoard
+            gridSize={gameData.gridSize}
+            slotBoard={slotBoard}
+            tray={tray}
+            pieceMap={pieceMap}
+            tileSize={tileSize}
+            onBoardChange={handleBoardChange}
+          />
+        ) : (
+          <NumberBoard
+            gridSize={gameData.gridSize}
+            slotBoard={slotBoard}
+            tray={tray}
+            pieceMap={pieceMap}
+            onBoardChange={handleBoardChange}
+          />
+        )}
+      </div>
+
+      {/* Verify error */}
+      {verifyError && (
+        <div role="alert" aria-live="polite" style={{
+          marginTop: 12, padding: '10px 14px', borderRadius: 10,
+          background: '#ffe9e7', color: '#a63c3c', fontSize: 13,
+          animation: shaking ? 'shake .5s ease-out' : 'none',
+        }}>
+          ⚠ {verifyError}
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 16, alignItems: 'center' }}>
+        <button
+          className="btn btn-primary"
+          onClick={handleVerify}
+          disabled={verifying}
+          aria-busy={verifying}
+          style={{ padding: '10px 20px', fontSize: 14, borderRadius: 12 }}
+        >
+          {verifying ? 'Checking…' : allPlaced ? '✓ Check Puzzle' : `Check Puzzle (${tray.length} remaining)`}
+        </button>
+        <button className="btn btn-soft" onClick={handlePreview} disabled={previewUses >= MAX_PREVIEWS}
+          title={`${MAX_PREVIEWS - previewUses} preview(s) left`}>
+          👁 Preview ({MAX_PREVIEWS - previewUses})
+        </button>
+        <button className="btn btn-soft" onClick={handleShuffle}>🔀 Shuffle tray</button>
+        <button className="btn btn-soft" onClick={handleReset}>↺ Reset</button>
+      </div>
+    </main>
+  );
+}

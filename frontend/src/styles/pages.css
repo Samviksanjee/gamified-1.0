@@ -1,0 +1,37 @@
+/* Page-specific styles */
+
+.green {
+  background: #4dbb85;
+}
+
+.stat {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.calendar {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  text-align: center;
+  font-size: 11px;
+}
+
+.calendar span {
+  padding: 7px 0;
+  border-radius: 8px;
+}
+
+.calendar .done {
+  background: #dff6e8;
+  color: #21875b;
+  font-weight: 900;
+}
+
+.calendar .today {
+  background: #dff4fc;
+  color: #1975a3;
+  font-weight: 900;
+  border: 1px solid #80cce1;
+}
